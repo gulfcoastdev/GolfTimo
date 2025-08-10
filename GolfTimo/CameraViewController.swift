@@ -1,22 +1,28 @@
 import UIKit
 import AVFoundation
 import Photos
+import PhotosUI
 
 class CameraViewController: UIViewController {
-    private var captureSession: AVCaptureSession!
-    private var stillImageOutput: AVCapturePhotoOutput!
-    private var videoPreviewLayer: AVCaptureVideoPreviewLayer!
+    private var captureSession: AVCaptureSession?
+    private var stillImageOutput: AVCapturePhotoOutput?
+    private var videoPreviewLayer: AVCaptureVideoPreviewLayer?
     private var clockOverlayView: ClockOverlayView!
+    private var backgroundImageView: UIImageView!
     
     private var captureButton: UIButton!
     private var dismissButton: UIButton!
     private var overlayToggleButton: UIButton!
+    private var photoPickerButton: UIButton!
+    
+    private var isCameraMode = true
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        checkCameraPermissions()
+        setupBackgroundImageView()
         setupUI()
         setupClockOverlay()
+        checkCameraPermissions()
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -79,6 +85,23 @@ class CameraViewController: UIViewController {
         }
     }
     
+    private func setupBackgroundImageView() {
+        backgroundImageView = UIImageView()
+        backgroundImageView.contentMode = .scaleAspectFill
+        backgroundImageView.clipsToBounds = true
+        backgroundImageView.backgroundColor = .black
+        backgroundImageView.translatesAutoresizingMaskIntoConstraints = false
+        backgroundImageView.isHidden = true
+        view.addSubview(backgroundImageView)
+        
+        NSLayoutConstraint.activate([
+            backgroundImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+    
     private func setupUI() {
         captureButton = UIButton(type: .custom)
         captureButton.backgroundColor = .white
@@ -106,9 +129,18 @@ class CameraViewController: UIViewController {
         overlayToggleButton.translatesAutoresizingMaskIntoConstraints = false
         overlayToggleButton.addTarget(self, action: #selector(toggleOverlay), for: .touchUpInside)
         
+        photoPickerButton = UIButton(type: .system)
+        photoPickerButton.setTitle("📸", for: .normal)
+        photoPickerButton.titleLabel?.font = UIFont.systemFont(ofSize: 24, weight: .medium)
+        photoPickerButton.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        photoPickerButton.layer.cornerRadius = 25
+        photoPickerButton.translatesAutoresizingMaskIntoConstraints = false
+        photoPickerButton.addTarget(self, action: #selector(openPhotoPicker), for: .touchUpInside)
+        
         view.addSubview(captureButton)
         view.addSubview(dismissButton)
         view.addSubview(overlayToggleButton)
+        view.addSubview(photoPickerButton)
         
         NSLayoutConstraint.activate([
             captureButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -124,7 +156,12 @@ class CameraViewController: UIViewController {
             overlayToggleButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             overlayToggleButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
             overlayToggleButton.widthAnchor.constraint(equalToConstant: 80),
-            overlayToggleButton.heightAnchor.constraint(equalToConstant: 40)
+            overlayToggleButton.heightAnchor.constraint(equalToConstant: 40),
+            
+            photoPickerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -30),
+            photoPickerButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -30),
+            photoPickerButton.widthAnchor.constraint(equalToConstant: 50),
+            photoPickerButton.heightAnchor.constraint(equalToConstant: 50)
         ])
     }
     
@@ -142,15 +179,19 @@ class CameraViewController: UIViewController {
     }
     
     @objc private func capturePhoto() {
-        let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-        stillImageOutput.capturePhoto(with: settings, delegate: self)
-        
-        UIView.animate(withDuration: 0.1, animations: {
-            self.captureButton.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
-        }) { _ in
-            UIView.animate(withDuration: 0.1) {
-                self.captureButton.transform = CGAffineTransform.identity
+        if isCameraMode, let stillImageOutput = stillImageOutput {
+            let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+            stillImageOutput.capturePhoto(with: settings, delegate: self)
+            
+            UIView.animate(withDuration: 0.1, animations: {
+                self.captureButton.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+            }) { _ in
+                UIView.animate(withDuration: 0.1) {
+                    self.captureButton.transform = CGAffineTransform.identity
+                }
             }
+        } else {
+            openPhotoPicker()
         }
     }
     
@@ -161,6 +202,39 @@ class CameraViewController: UIViewController {
     @objc private func toggleOverlay() {
         clockOverlayView.isHidden.toggle()
         overlayToggleButton.alpha = clockOverlayView.isHidden ? 0.5 : 1.0
+    }
+    
+    @objc private func openPhotoPicker() {
+        var configuration = PHPickerConfiguration()
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+    
+    private func switchToPhotoMode() {
+        isCameraMode = false
+        captureSession?.stopRunning()
+        videoPreviewLayer?.removeFromSuperlayer()
+        backgroundImageView.isHidden = false
+        captureButton.setTitle("📸", for: .normal)
+        captureButton.backgroundColor = UIColor.blue.withAlphaComponent(0.8)
+        photoPickerButton.isHidden = true
+    }
+    
+    private func switchToCameraMode() {
+        isCameraMode = true
+        backgroundImageView.isHidden = true
+        captureButton.setTitle("", for: .normal)
+        captureButton.backgroundColor = .white
+        photoPickerButton.isHidden = false
+        if let captureSession = captureSession {
+            DispatchQueue.global(qos: .background).async {
+                captureSession.startRunning()
+            }
+        }
     }
     
     private func checkCameraPermissions() {
@@ -175,16 +249,18 @@ class CameraViewController: UIViewController {
                     if granted {
                         self.setupCamera()
                     } else {
-                        self.showPermissionAlert()
+                        self.switchToPhotoMode()
                     }
                 }
             }
         case .denied, .restricted:
             DispatchQueue.main.async {
-                self.showPermissionAlert()
+                self.switchToPhotoMode()
             }
         @unknown default:
-            break
+            DispatchQueue.main.async {
+                self.switchToPhotoMode()
+            }
         }
     }
     
@@ -242,5 +318,22 @@ extension CameraViewController: AVCapturePhotoCaptureDelegate {
         
         let haptic = UIImpactFeedbackGenerator(style: .medium)
         haptic.impactOccurred()
+    }
+}
+
+extension CameraViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        
+        guard let result = results.first else { return }
+        
+        result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
+            DispatchQueue.main.async {
+                if let image = object as? UIImage {
+                    self?.backgroundImageView.image = image
+                    self?.backgroundImageView.isHidden = false
+                }
+            }
+        }
     }
 }

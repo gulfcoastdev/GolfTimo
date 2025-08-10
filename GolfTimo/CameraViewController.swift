@@ -34,23 +34,27 @@ class CameraViewController: UIViewController {
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if captureSession?.isRunning == false {
+       guard let captureSession = captureSession else {
+          return
+       }
+        if captureSession.isRunning == false {
             DispatchQueue.global(qos: .background).async {
-                self.captureSession.startRunning()
+                captureSession.startRunning()
             }
         }
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if captureSession?.isRunning == true {
+        guard let captureSession = captureSession else { return }
+        if captureSession.isRunning {
             captureSession.stopRunning()
         }
     }
     
     private func setupCamera() {
-        captureSession = AVCaptureSession()
-        captureSession.sessionPreset = .photo
+        let session = AVCaptureSession()
+        session.sessionPreset = .photo
         
         guard let backCamera = AVCaptureDevice.default(for: .video) else {
             showAlert(message: "Unable to access camera")
@@ -59,28 +63,38 @@ class CameraViewController: UIViewController {
         
         do {
             let input = try AVCaptureDeviceInput(device: backCamera)
-            stillImageOutput = AVCapturePhotoOutput()
+            let photoOutput = AVCapturePhotoOutput()
             
-            if captureSession.canAddInput(input) && captureSession.canAddOutput(stillImageOutput) {
-                captureSession.addInput(input)
-                captureSession.addOutput(stillImageOutput)
-                setupLivePreview()
+            guard session.canAddInput(input) && session.canAddOutput(photoOutput) else {
+                showAlert(message: "Unable to configure camera session")
+                return
             }
+            
+            session.addInput(input)
+            session.addOutput(photoOutput)
+            
+            captureSession = session
+            stillImageOutput = photoOutput
+            setupLivePreview()
         } catch let error {
             showAlert(message: "Error Unable to initialize camera: \(error.localizedDescription)")
         }
     }
     
     private func setupLivePreview() {
-        videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
-        videoPreviewLayer.videoGravity = .resizeAspectFill
-        videoPreviewLayer.connection?.videoOrientation = .portrait
-        view.layer.addSublayer(videoPreviewLayer)
+        guard let captureSession = captureSession else { return }
+        
+        let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer.connection?.videoRotationAngle = 0
+        view.layer.addSublayer(previewLayer)
+        
+        videoPreviewLayer = previewLayer
         
         DispatchQueue.global(qos: .userInitiated).async {
-            self.captureSession.startRunning()
+            captureSession.startRunning()
             DispatchQueue.main.async {
-                self.videoPreviewLayer.frame = self.view.bounds
+                previewLayer.frame = self.view.bounds
             }
         }
     }
@@ -216,7 +230,11 @@ class CameraViewController: UIViewController {
     
     private func switchToPhotoMode() {
         isCameraMode = false
-        captureSession?.stopRunning()
+        
+        if let captureSession = captureSession {
+            captureSession.stopRunning()
+        }
+        
         videoPreviewLayer?.removeFromSuperlayer()
         backgroundImageView.isHidden = false
         captureButton.setTitle("📸", for: .normal)
@@ -230,10 +248,10 @@ class CameraViewController: UIViewController {
         captureButton.setTitle("", for: .normal)
         captureButton.backgroundColor = .white
         photoPickerButton.isHidden = false
-        if let captureSession = captureSession {
-            DispatchQueue.global(qos: .background).async {
-                captureSession.startRunning()
-            }
+        
+        guard let captureSession = captureSession else { return }
+        DispatchQueue.global(qos: .background).async {
+            captureSession.startRunning()
         }
     }
     
@@ -329,10 +347,11 @@ extension CameraViewController: PHPickerViewControllerDelegate {
         
         result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
             DispatchQueue.main.async {
-                if let image = object as? UIImage {
-                    self?.backgroundImageView.image = image
-                    self?.backgroundImageView.isHidden = false
-                }
+                guard let self = self,
+                      let image = object as? UIImage else { return }
+                
+                self.backgroundImageView.image = image
+                self.backgroundImageView.isHidden = false
             }
         }
     }
